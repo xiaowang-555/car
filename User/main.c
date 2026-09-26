@@ -8,9 +8,11 @@
 #include "SmartCar.h"
 #include "Serial.h"
 
-#define BASE_SPEED    40.0				//基础速度
-#define TURN_SPEED    300				//直角弯原地转向速度
-#define LOST_TIMEOUT  75				//丢线超时次数,75×20ms≈1.5s
+#define BASE_SPEED    60.0				//基础速度(速度环目标:编码器脉冲增量/20ms)
+#define TURN_SPEED    300				//直角弯原地转向PWM占空比
+#define LOST_TIMEOUT  75				//单次丢线超时,75×20ms≈1.5s
+#define LOSS_DEBOUNCE 6			//丢线去抖:连续5×20ms=100ms才判定为真弯道
+#define TARGET_TURNS  3					//走完3个弯,第4个弯停车
 
 /*编码器换算常数*/
 #define WHEEL_DIAMETER_MM      65.0f
@@ -46,9 +48,9 @@ int16_t LeftPulse,RightPulse;
 /*循迹PID参数*/
 PID_t Line = {
 	.Tar = 0,
-	.Kp = 3,
+	.Kp = 4,
 	.Ki = 0,
-	.Kd = 15,
+	.Kd = 18,
 	.OutMax = 50,
 	.OutMin = -50,
 	.ErrorIntMax = 75
@@ -56,14 +58,15 @@ PID_t Line = {
 float DifSpeed;	
 	
  /*判断小车状态*/	
-volatile uint8_t Track_Count,Stop_Count,Turn_Flag;
-volatile uint16_t LostCount = 0;		//丢线持续时间计数
+volatile uint8_t Track_Count,Stop_Count;
+volatile uint16_t LostCount = 0;		//本次连续丢线已持续的20ms周期数(看到线即清零)
+volatile uint8_t Turn_Done = 0;			//本次丢线是否已计过弯,保证一个弯只计一次
+volatile uint8_t Finished = 0;			//已走完目标弯数,永久停车
 volatile float TotalDistance_mm = 0;			//小车累计走过的距离(单位mm),左右轮编码器增量的平均值累加
 extern volatile int8_t Location[8];				//Track.c里的8路传感器状态,OLED显示用
 
 int main(void)
 {
-	
 	OLED_Init();
 	SmartCar_Init();
 	Track_Init();
@@ -74,10 +77,10 @@ int main(void)
 	while(1)
 	{
 
-OLED_ShowSignedNum(1,1,Turn_Flag,5);
-OLED_ShowSignedNum(2,1,Stop_Count,5);
-OLED_ShowSignedNum(3,1,Left_Speed_PID.Tar,3);
-OLED_ShowSignedNum(4,1,Right_Speed_PID.Tar,3);
+OLED_ShowSignedNum(3,1,LostCount,5);	/*显示本次连续丢线周期数,便于调去抖阈值*/
+OLED_ShowSignedNum(4,1,Stop_Count,5);
+OLED_ShowSignedNum(1,1,Left_Speed_PID.Act,3);
+OLED_ShowSignedNum(2,1,Right_Speed_PID.Act,3);
 OLED_ShowSignedNum(3,7,Line.Out,3);
 OLED_ShowSignedNum(4,7,Line.Act,3);		
 Serial_Printf("%f,%f,%f,%f\n",Line.Act,Line.Out,Line.Error0,Line.ErrorInt);		
@@ -91,7 +94,6 @@ void TIM1_UP_IRQHandler(void)
 	if(TIM_GetITStatus(TIM1, TIM_IT_Update) == SET)
 	{
 		count++;
-		
 		if(count >=20){
 			count = 0;					
 			/*每20ms只读一次编码器,速度PID和测距共用这份增量*/
@@ -100,8 +102,15 @@ void TIM1_UP_IRQHandler(void)
 			
 			Line.Act = Track_GetState();
 
-			if(Track_Count > 0)						/*正常巡线*/
+			if(Finished)							/*已走完目标弯数,永久停车*/
 			{
+				Move_Stop();
+			}
+			else if(Track_Count > 0)				/*正常巡线*/
+			{
+				LostCount = 0;						/*重新看到线:丢线计数清零*/
+				Turn_Done = 0;						/*解除本次丢线的已计弯标记*/
+
 				PID_Update(&Line);
 				DifSpeed = Line.Out;
 			
@@ -118,31 +127,45 @@ void TIM1_UP_IRQHandler(void)
 				PID_Update(&Left_Speed_PID);
 				PID_Update(&Right_Speed_PID);
 				Move_SetSpeed(Left_Speed_PID.Out,Right_Speed_PID.Out);
-//				if(Stop_Count <=3){Turn_Flag = 1;}
 			}
 			
-			else							/*8路全丢线,判定为直角弯*/
+			else							/*8路全丢线*/
 			{
 				Line.ErrorInt = 0; /*丢线期间清零*/
-				if(LostCount < LOST_TIMEOUT /*&& Turn_Flag == 1*/)
+				LostCount++;
+
+				if(LostCount < LOSS_DEBOUNCE)		/*去抖:刚丢线的60ms内维持原速冲过去*/
 				{
-					LostCount++;
-					if(Line.Error0 < 0)
+					/*不发新指令,电机保持上一周期PWM,避免瞬时丢线被误判成直角弯*/
+				}
+				else if(LostCount < LOST_TIMEOUT)	/*确认是直角弯,开始原地转向*/
+				{
+					if(!Turn_Done)					/*边沿触发:一次丢线只计一个弯*/
+					{
+						Turn_Done = 1;
+						Stop_Count++;
+						if(Stop_Count > TARGET_TURNS)	/*已走完3个弯,这是第4个*/
+						{
+							Finished = 1;
+						}
+					}
+
+					if(Finished)
+					{
+						Move_Stop();				/*第4个弯:停车*/
+					}
+					else if(Line.Error0 < 0)		/*线最后出现在右侧*/
 					{
 						Move_SetSpeed(TURN_SPEED,-TURN_SPEED);	/*原地右转*/
-						Stop_Count++;
-//						Turn_Flag = 0;
 					}
-					else
+					else							/*线最后出现在左侧*/
 					{
 						Move_SetSpeed(-TURN_SPEED,TURN_SPEED);	/*原地左转*/
-						Stop_Count++;
-//						Turn_Flag = 0;
 					}
 				}
 				else
 				{
-					Move_Stop();  /*超时停车,防止无限打转*/
+					Move_Stop();  /*单次丢线超时,防止无限打转*/
 				}
 			}
 
