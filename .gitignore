@@ -1,0 +1,28 @@
+# ---- Keil MDK 编译产物 ----
+Objects/
+Listings/
+*.o
+*.crf
+*.d
+*.dep
+*.axf
+*.elf
+*.hex
+*.bin
+*.lnp
+*.sct
+*.lst
+*.map
+*.htm
+*.iex
+*.build_log.htm
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# ---- Claude Code 本地设置 ----
+.claude/settings.local.json

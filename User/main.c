@@ -118,26 +118,26 @@ void TIM1_UP_IRQHandler(void)
 				PID_Update(&Left_Speed_PID);
 				PID_Update(&Right_Speed_PID);
 				Move_SetSpeed(Left_Speed_PID.Out,Right_Speed_PID.Out);
-				if(Stop_Count <=3){Turn_Flag = 1;}
+//				if(Stop_Count <=3){Turn_Flag = 1;}
 			}
 			
 			else							/*8路全丢线,判定为直角弯*/
 			{
 				Line.ErrorInt = 0; /*丢线期间清零*/
-				if(LostCount < LOST_TIMEOUT && Turn_Flag == 1)
+				if(LostCount < LOST_TIMEOUT /*&& Turn_Flag == 1*/)
 				{
 					LostCount++;
 					if(Line.Error0 < 0)
 					{
 						Move_SetSpeed(TURN_SPEED,-TURN_SPEED);	/*原地右转*/
 						Stop_Count++;
-						Turn_Flag = 0;
+//						Turn_Flag = 0;
 					}
 					else
 					{
 						Move_SetSpeed(-TURN_SPEED,TURN_SPEED);	/*原地左转*/
 						Stop_Count++;
-						Turn_Flag = 0;
+//						Turn_Flag = 0;
 					}
 				}
 				else
