@@ -18,7 +18,10 @@ Listings/
 *.build_log.htm
 
 # ---- 编辑器 / 系统 ----
-.vscode/
+# 注意: .vscode/ 故意不忽略 —— 里面的 tasks.json 和 keil.ps1 是团队共用的
+# 编译/烧录任务，需要提交。只忽略 .vscode 下的个人化配置。
+.vscode/*.log
+.vscode/settings.json
 .idea/
 Thumbs.db
 Desktop.ini
